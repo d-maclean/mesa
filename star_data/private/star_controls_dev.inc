@@ -40,3 +40,8 @@
       ! WD phase separation
          
             logical :: phase_separation_no_diffusion
+
+      !controls for hdf5 output
+         logical :: use_hdf5_for_output_data
+         character(len=strlen) :: hdf5_output_name
+      

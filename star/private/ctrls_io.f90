@@ -121,6 +121,9 @@
     ! for reported surface/center abundances
     surface_avg_abundance_dq, center_avg_value_dq, &
 
+    ! for hdf5 output format
+    use_hdf5_for_output_data, hdf5_output_name, &
+
     ! mixing parameters
     min_convective_gap, min_thermohaline_gap, min_semiconvection_gap, min_thermohaline_dropout, &
     max_dropout_gradL_sub_grada, remove_embedded_semiconvection, recalc_mix_info_after_evolve, remove_mixing_glitches, &

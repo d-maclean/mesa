@@ -174,3 +174,16 @@
       ! ::  
 
     op_split_burn_min_T_for_variable_T_solver = 1d99
+
+! hdf5 output
+! ================
+
+
+      ! use_hdf5_for_output_data
+      ! ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+      ! use hdf5 API subroutines provided via forum_m to write history, profiles, and
+      ! models in hdf5 format.
+
+    use_hdf5_for_output_data = .false.
+    hdf5_output_name = 'output.hdf5'
