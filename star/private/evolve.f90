@@ -2295,7 +2295,6 @@
          use evolve_support, only: output
          use profile, only: do_save_profiles
          use history, only: write_history_info
-         use hdf5_output, only: write_hdf5_history_info
          use utils_lib, only: free_iounit, number_iounits_allocated
          use alloc, only: size_work_arrays
 
@@ -2330,22 +2329,13 @@
 
          if (s% need_to_update_history_now .and. s% do_history_file) then
 
-            if (s% use_hdf5_for_output_data) then ! experimental hdf5 flag
-               call write_hdf5_history_info(s, ierr)
-               if (ierr /= 0) then
-                  finish_step = terminate
-                  if (s% report_ierr) write(*,*) 'finish_step: write_hdf5_history_info ierr', ierr
-                  s% result_reason = nonzero_ierr
-                  return
-               end if
-            else
-               call write_history_info( &
-                  s, ierr)
-               if (ierr /= 0) then
-                  finish_step = terminate
-                  if (s% report_ierr) write(*, *) 'finish_step: write_history_info ierr', ierr
-                  s% result_reason = nonzero_ierr
-                  return
+            call write_history_info( &
+               s, ierr)
+            if (ierr /= 0) then
+               finish_step = terminate
+               if (s% report_ierr) write(*, *) 'finish_step: write_history_info ierr', ierr
+               s% result_reason = nonzero_ierr
+               return
             end if
             s% need_to_update_history_now = .false.
          end if

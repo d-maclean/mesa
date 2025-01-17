@@ -31,6 +31,7 @@ module history
    use chem_def
    use history_specs
    use star_utils
+   use forum_m, only: hdf5io_t, is_hdf5, CREATE_FILE, OPEN_FILE_RO, OPEN_FILE_RW
 
    implicit none
 
@@ -87,6 +88,10 @@ contains
          names(:) ! (num_history_columns)
       real(dp), pointer :: vals(:) ! (num_history_columns)
       logical, pointer :: is_int(:) ! (num_history_columns)
+      character (len=strlen) :: hdf5_filename
+      logical :: hdf5_file_exists, group_exists, attr_exists, dset_exists
+      type(hdf5io_t) :: hi, hi_header, hi_history
+ 
       type(net_general_info), pointer :: g => null()
 
       logical :: history_file_exists
@@ -256,23 +261,39 @@ contains
       if (write_flag .and. (open_close_log .or. s% model_number == -100)) then
          if(.not. folder_exists(trim(s% log_directory))) call mkdir(trim(s% log_directory))
 
-         fname = trim(s% log_directory) // '/' // trim(s% star_history_name)
-         inquire(file = trim(fname), exist = history_file_exists)
-         if ((.not. history_file_exists) .or. &
-            s% doing_first_model_of_run .or. s% need_to_set_history_names_etc) then
-            ierr = 0
-            if (len_trim(s% star_history_header_name) > 0) then
-               fname = trim(s% log_directory) // '/' // trim(s% star_history_header_name)
+         if (s% use_hdf5_for_output_data) then ! experimental hdf5 option
+            fname = trim(s% log_directory) // '/' // trim(s% hdf5_output_name)
+            hdf5_file_exists = is_hdf5(trim(fname))
+            if (.not. hdf5_file_exists .or. & ! make file, if it does not exist
+               s% doing_first_model_of_run .or. s% need_to_set_history_names_etc) then
+               hi = hdf5io_t(trim(fname), CREATE_FILE)
+               hdf5_file_exists = is_hdf5(trim(fname))
+               if (.not. hdf5_file_exists) then
+                  write(*, *) 'failed to open' // trim(fname)
+                  call dealloc
+                  return
+               end if
+               i0 = 2 ! skip first pass
             end if
-            open(newunit = io, file = trim(fname), action = 'write', iostat = ierr)
-         else
-            i0 = 3
-            open(newunit = io, file = trim(fname), action = 'write', position = 'append', iostat = ierr)
-         end if
-         if (ierr /= 0) then
-            write(*, *) 'failed to open ' // trim(fname)
-            call dealloc
-            return
+         else ! plain-text
+            fname = trim(s% log_directory) // '/' // trim(s% star_history_name)
+            inquire(file = trim(fname), exist = history_file_exists)
+            if ((.not. history_file_exists) .or. &
+               s% doing_first_model_of_run .or. s% need_to_set_history_names_etc) then
+               ierr = 0
+               if (len_trim(s% star_history_header_name) > 0) then
+                  fname = trim(s% log_directory) // '/' // trim(s% star_history_header_name)
+               end if
+               open(newunit = io, file = trim(fname), action = 'write', iostat = ierr)
+            else
+               i0 = 3
+               open(newunit = io, file = trim(fname), action = 'write', position = 'append', iostat = ierr)
+            end if
+            if (ierr /= 0) then
+               write(*, *) 'failed to open ' // trim(fname)
+               call dealloc
+               return
+            end if
          end if
       end if
 
@@ -319,38 +340,63 @@ contains
             end if
             do i = 1, num_extra_header_items
                if(trim(extra_header_item_names(i))=='unknown') then
-                  write(*, *) "Warning empty history name for extra_history_header ", i
+                  write(*, *) 'Warning empty history name for extra_history_header ', i
                end if
             end do
          end if
 
-         do i = 1, 3
-            col = 0
-            call write_string(io, col, i, 'version_number', version_number)
-            call write_string(io, col, i, 'compiler', compiler_name)
-            call write_string(io, col, i, 'build', compiler_version_name)
-            call write_string(io, col, i, 'MESA_SDK_version', mesasdk_version_name)
-            call write_string(io, col, i, 'math_backend', math_backend)
-            call write_string(io, col, i, 'date', date)
-            !call write_val(io, col, i, 'initial_mass', s% initial_mass)
-            !call write_val(io, col, i, 'initial_z', s% initial_z)
-            call write_val(io, col, i, 'burn_min1', s% burn_min1)
-            call write_val(io, col, i, 'burn_min2', s% burn_min2)
+         if (s% use_hdf5_for_output_data) then ! write header, hdf5 version
+            hi_header = hdf5io_t(hi, 'header')
 
-            call write_val(io, col, i, 'msun', msun)
-            call write_val(io, col, i, 'rsun', rsun)
-            call write_val(io, col, i, 'lsun', lsun)
+            call hi_header% write_attr('version_number', version_number)
+            call hi_header% write_attr('compiler', compiler_name)
+            call hi_header% write_attr('build', compiler_version_name)
+            call hi_header% write_attr('MESA_SDK_version', mesasdk_version_name)
+            call hi_header% write_attr('math_backend', math_backend)
+            call hi_header% write_attr('date', date)
+            call hi_header% write_attr('burn_min1', s% burn_min1)
+            call hi_header% write_attr('burn_min2', s% burn_min2)
 
-            do j = 1, num_extra_header_items
-               call write_val(io, col, i, &
-                  extra_header_item_names(j), extra_header_item_vals(j))
+            call hi_header% write_attr('msun', msun)
+            call hi_header% write_attr('rsun', rsun)
+            call hi_header% write_attr('lsun', lsun)
+
+            if (num_extra_header_items > 0) then
+               do j = 1, num_extra_cols
+                  call hi_header% write_attr(&
+                     trim(extra_header_item_names(j)), extra_header_item_vals(j))
+               end do
+            end if
+
+            call hi_header% final() ! close header unit
+
+         else ! plain-text version
+            do i = 1, 3
+               col = 0
+               call write_string(io, col, i, 'version_number', version_number)
+               call write_string(io, col, i, 'compiler', compiler_name)
+               call write_string(io, col, i, 'build', compiler_version_name)
+               call write_string(io, col, i, 'MESA_SDK_version', mesasdk_version_name)
+               call write_string(io, col, i, 'math_backend', math_backend)
+               call write_string(io, col, i, 'date', date)
+               !call write_val(io, col, i, 'initial_mass', s% initial_mass)
+               !call write_val(io, col, i, 'initial_z', s% initial_z)
+               call write_val(io, col, i, 'burn_min1', s% burn_min1)
+               call write_val(io, col, i, 'burn_min2', s% burn_min2)
+
+               call write_val(io, col, i, 'msun', msun)
+               call write_val(io, col, i, 'rsun', rsun)
+               call write_val(io, col, i, 'lsun', lsun)
+
+               do j = 1, num_extra_header_items
+                  call write_val(io, col, i, &
+                     extra_header_item_names(j), extra_header_item_vals(j))
+               end do
+
+               write(io, '(A)')
             end do
-
             write(io, '(A)')
-
-         end do
-
-         write(io, '(A)')
+         end if
 
          if (num_extra_header_items > 0) &
             deallocate(extra_header_item_names, extra_header_item_vals)
@@ -415,6 +461,11 @@ contains
 
          end if
 
+         ! if using hdf5, create/open history group
+         if (s% use_hdf5_for_output_data) then
+            hi_history = hdf5io_t(hi, 'history')
+         end if
+
          do j = 1, numcols
             call do_col(i, j)
          end do
@@ -428,11 +479,16 @@ contains
             call do_extra_binary_col(i, j, numcols + num_extra_cols + num_binary_cols)
          end do
 
-         if (write_flag) write(io, *)
+         if (write_flag) then
+            if (.not. s% use_hdf5_for_output_data) then
+               write(io, *); write(io, *)
+               if (open_close_log) close(io)
+            else
+               call hi_history% final()
+            end if
+         end if
 
       end do
-
-      if (open_close_log .and. write_flag) close(io)
 
       call dealloc
 
@@ -516,7 +572,11 @@ contains
          integer, intent(in) :: j
          integer :: ierr
          character (len = *), intent(in) :: col_name
-         if (write_flag) write(io, fmt = txt_fmt, advance = 'no') trim(col_name)
+
+         if (write_flag .and. (.not. s% use_hdf5_for_output_data)) then
+            write(io, fmt = txt_fmt, advance = 'no') trim(col_name)
+         end if
+         
          if (associated(names)) names(j) = trim(col_name)
          if (s% need_to_set_history_names_etc) then
             call integer_dict_define(s% history_names_dict, col_name, j, ierr)
@@ -847,6 +907,8 @@ contains
 
 
       subroutine do_col_pass1 ! write the column number
+         if (s% use_hdf5_for_output_data) return
+         
          col = col + 1
          if (write_flag) write(io, fmt = int_fmt, advance = 'no') col
       end subroutine do_col_pass1
@@ -996,7 +1058,7 @@ contains
          else
             col_name = trim(history_column_name(c))
          end if
-         call do_name(j, col_name)
+         if (.not. s% use_hdf5_for_output_data) call do_name(j, col_name)
       end subroutine do_col_pass2
 
 
@@ -1098,9 +1160,17 @@ contains
          real(dp), intent(in) :: val
          if (write_flag) then
             if (is_bad_num(val)) then
-               write(io, fmt = dbl_fmt, advance = 'no') -1d99
+               if (s% use_hdf5_for_output_data) then
+                  call hi_history% write_dset(names(j), -1d99)
+               else
+                  write(io, fmt = dbl_fmt, advance = 'no') -1d99
+               end if
             else
-               write(io, fmt = dbl_fmt, advance = 'no') val
+               if (s% use_hdf5_for_output_data) then
+                  call hi_history% write_dset(names(j), val)
+               else
+                  write(io, fmt = dbl_fmt, advance = 'no') val
+               end if
             end if
          end if
          if (associated(vals)) vals(j) = val
@@ -1111,7 +1181,13 @@ contains
       subroutine do_int_val(j, val)
          integer, intent(in) :: j
          integer, intent(in) :: val
-         if (write_flag) write(io, fmt = int_fmt, advance = 'no') val
+         if (write_flag) then
+            if (s% use_hdf5_for_output_data) then
+               call hi_history% write_dset(names(j), val)
+            else
+               write(io, fmt = int_fmt, advance = 'no') val
+            end if
+         end if
          if (associated(vals)) vals(j) = dble(val)
          if (associated(is_int)) is_int(j) = .true.
       end subroutine do_int_val
